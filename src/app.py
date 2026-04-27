@@ -25,19 +25,6 @@ class ApplicationNote:
         self._configurer_page()
         self._initialiser_donnees()
         
-        # Initialisation des services (Flet 0.84.0)
-        # On les attache nommément pour éviter les conflits d'overlay
-        self.selecteur_pdf = ft.FilePicker()
-        self.selecteur_export_json = ft.FilePicker()
-        self.selecteur_import_json = ft.FilePicker()
-        
-        # Enregistrement immédiat dans l'overlay
-        self.page.overlay.extend([
-            self.selecteur_pdf,
-            self.selecteur_export_json,
-            self.selecteur_import_json
-        ])
-        
         # Enregistrement de l'instance pour la navigation
         self.page.app_instance = self
         
@@ -205,8 +192,12 @@ class ApplicationNote:
         est_nouvelle = id_note is None
         journal.info(f"Navigation vers l'Éditeur (Nouvelle={est_nouvelle}, ID={id_note})")
         
-        vue_editeur = VueEditeur(self.page)
+        vue_editeur = VueEditeur(self.page, id_note=id_note)
         
+        def action_sauvegarder(e):
+            if vue_editeur.sauvegarder():
+                self._naviguer_vers_accueil()
+
         self.page.appbar = ft.AppBar(
             leading=ft.IconButton(
                 icon=ft.Icons.CLOSE,
@@ -221,7 +212,7 @@ class ApplicationNote:
                 ft.IconButton(
                     icon=ft.Icons.SAVE,
                     tooltip="Enregistrer",
-                    on_click=lambda _: journal.info("Action Sauvegarder invoquée")
+                    on_click=action_sauvegarder
                 ),
             ],
         )
@@ -238,10 +229,13 @@ class ApplicationNote:
 
 def principal(page: ft.Page) -> None:
     """Point d'entrée principal de l'application Flet."""
-    # Configuration de l'icône (cherche dans le dossier assets_dir)
+    # Configuration de l'icône
     page.window_icon = "NoteApp.png"
     journal.info("Démarrage de NoteApp...")
+    
+    # Lancement de l'application (Plus de FilePicker Flet instable)
     ApplicationNote(page)
+    page.update()
 
 if __name__ == "__main__":
     # Lancement de l'application avec spécification du dossier des ressources

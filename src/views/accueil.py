@@ -182,7 +182,7 @@ class VueAccueil(ft.Container):
     def _gerer_clic_favori(self, id_note: int) -> None:
         """Bascule l'état favori d'une note."""
         try:
-            note = self.session_db.query(Note).filter(Note.id == id_note).first()
+            note = self.session_db.query(Note).filter(Note.identifiant == id_note).first()
             if note:
                 note.est_favoris = not note.est_favoris
                 self.session_db.commit()

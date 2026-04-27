@@ -6,7 +6,6 @@ import flet as ft
 from src.models.note import Note
 from src.models.categorie import Categorie
 from src.models.base_de_donnees import obtenir_session
-from src.utils.constantes import Couleurs, Icones
 from src.utils.journaliseur import journal
 from src.utils.assistants_ui import afficher_barre_notification
 
@@ -21,13 +20,10 @@ class VueEditeur(ft.Container):
         self.au_sauvegarder = au_sauvegarder
         self.session_db = obtenir_session()
         self._note = None
-        self._donnees_export_temp = None
-
-        # Récupération de la référence nommée depuis l'application (Stabilité Flet 0.84.0)
-        self.selecteur_pdf = self.page_principale.app_instance.selecteur_pdf
-        self.selecteur_pdf.on_result = self._sur_resultat_export_pdf
+        self._est_favori = False
+        self._est_chiffre = False
         
-        # Initialisation de la note si demandée
+        # Initialisation des composants UI
         self.champ_titre = ft.TextField(
             hint_text="Titre de la note",
             border=ft.InputBorder.NONE,
@@ -46,7 +42,6 @@ class VueEditeur(ft.Container):
             content_padding=ft.padding.symmetric(horizontal=16, vertical=10),
         )
 
-        # Sélecteur de catégorie
         self.menu_categorie = ft.Dropdown(
             hint_text="Catégorie",
             width=200,
@@ -54,20 +49,17 @@ class VueEditeur(ft.Container):
         )
         self._charger_categories()
 
-        # Boutons d'état
         self.bouton_favori = ft.IconButton(
             icon=ft.Icons.FAVORITE_BORDER,
             tooltip="Ajouter aux favoris",
             on_click=self._basculer_favori
         )
-        self._est_favori = False
 
         self.bouton_chiffrer = ft.IconButton(
             icon=ft.Icons.LOCK_OPEN,
             tooltip="Chiffrer la note",
             on_click=self._basculer_chiffrement
         )
-        self._est_chiffre = False
 
         # Barre d'outils
         barre_outils = ft.Container(
@@ -76,13 +68,17 @@ class VueEditeur(ft.Container):
                 ft.VerticalDivider(width=1),
                 self.bouton_favori,
                 self.bouton_chiffrer,
-                ft.IconButton(ft.Icons.PICTURE_AS_PDF, tooltip="Exporter en PDF", on_click=self._exporter_en_pdf),
+                ft.IconButton(
+                    icon=ft.Icons.PICTURE_AS_PDF, 
+                    tooltip="Exporter en PDF", 
+                    on_click=self._exporter_pdf
+                ),
             ], spacing=5),
             padding=ft.padding.symmetric(horizontal=16, vertical=8),
             bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
         )
 
-        # Montage de la vue
+        # Assemblage
         self.content = ft.Column([
             barre_outils,
             self.champ_titre,
@@ -97,14 +93,15 @@ class VueEditeur(ft.Container):
             self._charger_note_existante(id_note)
 
     def _charger_categories(self) -> None:
-        """Remplit le menu déroulant avec les catégories."""
         self.menu_categorie.options = [ft.dropdown.Option(key="none", text="Sans catégorie")]
-        categories = self.session_db.query(Categorie).all()
-        for cat in categories:
-            self.menu_categorie.options.append(ft.dropdown.Option(key=str(cat.identifiant), text=cat.nom))
+        try:
+            categories = self.session_db.query(Categorie).all()
+            for cat in categories:
+                self.menu_categorie.options.append(ft.dropdown.Option(key=str(cat.identifiant), text=cat.nom))
+        except Exception as e:
+            journal.error(f"Erreur chargement catégories : {e}")
 
     def _charger_note_existante(self, id_note: int) -> None:
-        """Charge une note pour modification."""
         try:
             self._note = self.session_db.query(Note).filter(Note.identifiant == id_note).first()
             if self._note:
@@ -138,15 +135,15 @@ class VueEditeur(ft.Container):
         self.bouton_chiffrer.icon_color = ft.Colors.AMBER if self._est_chiffre else None
 
     def sauvegarder(self) -> bool:
-        """Sauvegarde la note en base de données."""
-        titre = self.champ_titre.value.strip()
-        contenu = self.champ_contenu.value.strip()
+        """Méthode appelée par l'application pour enregistrer la note."""
+        titre = self.champ_titre.value.strip() if self.champ_titre.value else ""
+        contenu = self.champ_contenu.value.strip() if self.champ_contenu.value else ""
 
         if not titre:
             afficher_barre_notification(self.page_principale, "Le titre est obligatoire !", est_erreur=True)
             return False
 
-        id_cat = None if self.menu_categorie.value == "none" else int(self.menu_categorie.value)
+        id_cat = None if not self.menu_categorie.value or self.menu_categorie.value == "none" else int(self.menu_categorie.value)
 
         try:
             if self._note:
@@ -156,66 +153,62 @@ class VueEditeur(ft.Container):
                 self._note.est_favoris = self._est_favori
                 self._note.est_chiffree = self._est_chiffre
             else:
-                nouvelle_note = Note(
+                nueva_note = Note(
                     titre=titre,
                     contenu=contenu,
                     id_categorie=id_cat,
                     est_favoris=self._est_favori,
                     est_chiffree=self._est_chiffre
                 )
-                self.session_db.add(nouvelle_note)
+                self.session_db.add(nueva_note)
             
             self.session_db.commit()
-            journal.success("Note sauvegardée avec succès.")
+            journal.success(f"Note '{titre}' sauvegardée.")
             return True
         except Exception as e:
-            journal.error(f"Erreur sauvegarde : {e}")
+            journal.error(f"Erreur sauvegarde base de données : {e}")
+            self.session_db.rollback()
             return False
 
-    def _exporter_en_pdf(self, e) -> None:
-        """Ouvre le sélecteur de fichier pour l'exportation PDF."""
-        titre = self.champ_titre.value or "Note_Sans_Titre"
-        contenu = self.champ_contenu.value or ""
+    def _exporter_pdf(self, e) -> None:
+        """Export PDF natif via Tkinter."""
+        import tkinter as tk
+        from tkinter import filedialog
         
-        # Récupération du nom de catégorie
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        
+        titre = self.champ_titre.value or "Sans_titre"
+        nom_defaut = f"{titre.replace(' ', '_')}.pdf"
+        
+        chemin = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("Fichiers PDF", "*.pdf")],
+            initialfile=nom_defaut,
+            title="Exporter en PDF"
+        )
+        root.destroy()
+        
+        if not chemin:
+            return
+
         nom_cat = None
         if self.menu_categorie.value and self.menu_categorie.value != "none":
             cat = self.session_db.query(Categorie).get(int(self.menu_categorie.value))
             nom_cat = cat.nom if cat else None
 
-        # Stockage temporaire des données
-        self._donnees_export_temp = {
-            "titre": titre,
-            "contenu": contenu,
-            "categorie": nom_cat,
-            "date_creation": self._note.date_creation if self._note else None
-        }
-
-        # Proposition d'un nom de fichier par défaut
-        nom_defaut = f"{titre.replace(' ', '_')}.pdf"
-        self.selecteur_pdf.save_file(
-            file_name=nom_defaut,
-            allowed_extensions=["pdf"]
-        )
-
-    def _sur_resultat_export_pdf(self, e: ft.FilePickerResultEvent) -> None:
-        """Finalise l'exportation PDF une fois le chemin choisi."""
-        if not e.path or not self._donnees_export_temp:
-            return
-
         from src.services.export_pdf import obtenir_service_pdf
         try:
             pdf_service = obtenir_service_pdf()
             pdf_service.exporter_note(
-                titre=self._donnees_export_temp["titre"],
-                contenu=self._donnees_export_temp["contenu"],
-                categorie=self._donnees_export_temp["categorie"],
-                date_creation=self._donnees_export_temp["date_creation"],
-                chemin_complet=e.path
+                titre=titre,
+                contenu=self.champ_contenu.value or "",
+                chemin_complet=chemin,
+                categorie=nom_cat,
+                date_creation=self._note.date_creation if self._note else None
             )
-            afficher_barre_notification(self.page_principale, f"Note exportée : {e.path.split('\\')[-1]}")
+            afficher_barre_notification(self.page_principale, f"PDF créé : {chemin}")
         except Exception as ex:
-            journal.error(f"Échec export PDF : {ex}")
-            afficher_barre_notification(self.page_principale, "Erreur lors de l'exportation PDF", est_erreur=True)
-        finally:
-            self._donnees_export_temp = None
+            journal.error(f"Erreur export PDF : {ex}")
+            afficher_barre_notification(self.page_principale, "Erreur export PDF", est_erreur=True)
